@@ -18,19 +18,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------
-# == Datos iniciales / "DB" en memoria
-# ---------------------------
 _next_book_id = 1
 next_book_id = lambda: _next_id("book")
 _next_user_id = 1
 next_user_id = lambda: _next_id("user")
 
 STORES = {
-    "books": [],      # lista de dicts con keys: id, titulo, autor, categoria, createdAt
-    "users": [],      # lista de dicts con keys: id, nombre, email, password_hash, biblioteca (lista de book ids)
-    "reviews": {},    # key: book_id -> list of reviews { user_id, texto, cal, createdAt }
-    "tokens": {},     # token -> user_id (sesiones temporales)
+    "books": [],      
+    "users": [],      
+    "reviews": {},   
+    "tokens": {},    
 }
 INVENTARIO_LIBROS = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
@@ -52,7 +49,6 @@ def _next_id(kind: str) -> int:
         return val
     raise RuntimeError("unknown id kind")
 
-# Poblado inicial (tomado de tu HTML original)
 initial_books = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
     {"titulo": "El libro troll", "autor": "el rubius", "categoria": "Historico"},
@@ -70,9 +66,6 @@ for b in initial_books:
     }
     STORES["books"].append(book)
 
-# ---------------------------
-# == Schemas (Pydantic)
-# ---------------------------
 class BookCreate(BaseModel):
     titulo: str = Field(..., min_length=1)
     autor: str = Field(..., min_length=1)
@@ -111,9 +104,6 @@ class ReviewOut(BaseModel):
     texto: str
     cal: int
 
-# ---------------------------
-# == Utilidades (hash, auth)
-# ---------------------------
 def _hash_password(clave: str) -> str:
     return hashlib.sha256(clave.encode("utf-8")).hexdigest()
 
@@ -542,16 +532,11 @@ HTML_PAGE = f"""<!DOCTYPE html>
   </script>
 </body>
 </html>"""
-# Para brevedad en este snippet lo oculto; en tu archivo final puedes usar el HTML que ya tenías.
-# (En el ejemplo real que pegues en tu proyecto, copia la variable HTML_PAGE completa desde tu main.py original.)
 
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(HTML_PAGE)
 
-# ---------------------------
-# == Endpoints API v1 - Libros
-# ---------------------------
 @app.get("/api/v1/libros", response_model=List[BookOut])
 def listar_libros(
     page: int = 1,
@@ -565,7 +550,6 @@ def listar_libros(
     """
     items = STORES["books"].copy()
 
-    # filtro
     if categoria:
         items = [b for b in items if b["categoria"].lower() == categoria.lower()]
 
@@ -573,7 +557,6 @@ def listar_libros(
         q = search.lower()
         items = [b for b in items if q in b["titulo"].lower() or q in b["autor"].lower()]
 
-    # sort: ejemplo "titulo:asc" o "id:desc"
     if sort:
         try:
             field, direction = sort.split(":")
@@ -582,7 +565,6 @@ def listar_libros(
         except Exception:
             pass
 
-    # paginación
     start = (page - 1) * limit
     end = start + limit
     return items[start:end]
@@ -626,14 +608,11 @@ def eliminar_libro(libro_id: int, user=Depends(get_current_user)):
     for i, b in enumerate(STORES["books"]):
         if b["id"] == libro_id:
             STORES["books"].pop(i)
-            # eliminar reseñas asociadas
             STORES["reviews"].pop(str(libro_id), None)
             return
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
 
-# ---------------------------
-# == Endpoints - Reseñas (anidadas)
-# ---------------------------
+
 @app.get("/api/v1/libros/{libro_id}/reseñas", response_model=List[ReviewOut])
 def listar_reseñas(libro_id: int):
     key = str(libro_id)
@@ -641,7 +620,6 @@ def listar_reseñas(libro_id: int):
 
 @app.post("/api/v1/libros/{libro_id}/reseñas", status_code=status.HTTP_201_CREATED, response_model=ReviewOut)
 def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current_user)):
-    # valida existencia libro
     if not any(b["id"] == libro_id for b in STORES["books"]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
     key = str(libro_id)
@@ -649,9 +627,7 @@ def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current
     STORES["reviews"].setdefault(key, []).append(rec)
     return rec
 
-# ---------------------------
-# == Usuarios & Auth (simple)
-# ---------------------------
+
 @app.post("/api/v1/usuarios", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 def registrar_usuario(payload: UserCreate):
     if _get_user_by_email(payload.email):
@@ -661,7 +637,7 @@ def registrar_usuario(payload: UserCreate):
         "nombre": payload.nombre,
         "email": payload.email,
         "password_hash": _hash_password(payload.clave),
-        "biblioteca": [],  # lista de book ids
+        "biblioteca": [],  
     }
     STORES["users"].append(user)
     return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
@@ -678,9 +654,7 @@ def login(email: EmailStr, clave: str):
 def who_am_i(user=Depends(get_current_user)):
     return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
 
-# ---------------------------
-# == Operaciones de biblioteca personal (agregar/quitar libro)
-# ---------------------------
+
 @app.post("/api/v1/usuarios/me/biblioteca/{libro_id}", status_code=status.HTTP_200_OK)
 def agregar_a_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
     if not any(b["id"] == libro_id for b in STORES["books"]):
@@ -697,9 +671,6 @@ def quitar_de_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
     user["biblioteca"].remove(libro_id)
     return {"message": "Libro eliminado"}
 
-# ---------------------------
-# == Run
-# ---------------------------
 if __name__ == "__main__":
     import uvicorn
     puerto = int(os.environ.get("PORT", 8000))
