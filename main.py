@@ -1,4 +1,3 @@
-# main.py
 from fastapi import FastAPI, HTTPException, status, Depends, Header
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,10 +9,10 @@ import os
 
 app = FastAPI(title="Sistema Biblioteca - API RESTful")
 
-# CORS (opcional, útil para frontends locales)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # en producción restrinje dominios
+    allow_origins=["*"],  
     allow_methods=["*"],
     allow_headers=["*"],
 )
