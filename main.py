@@ -1,8 +1,37 @@
-from fastapi import FastAPI
+# main.py
+from fastapi import FastAPI, HTTPException, status, Depends, Header
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional, Dict, Any
+import secrets
+import hashlib
+import os
 
-app = FastAPI(title="Sistema Biblioteca FastAPI")
+app = FastAPI(title="Sistema Biblioteca - API RESTful")
 
+# CORS (opcional, útil para frontends locales)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # en producción restrinje dominios
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------
+# == Datos iniciales / "DB" en memoria
+# ---------------------------
+_next_book_id = 1
+next_book_id = lambda: _next_id("book")
+_next_user_id = 1
+next_user_id = lambda: _next_id("user")
+
+STORES = {
+    "books": [],      # lista de dicts con keys: id, titulo, autor, categoria, createdAt
+    "users": [],      # lista de dicts con keys: id, nombre, email, password_hash, biblioteca (lista de book ids)
+    "reviews": {},    # key: book_id -> list of reviews { user_id, texto, cal, createdAt }
+    "tokens": {},     # token -> user_id (sesiones temporales)
+}
 INVENTARIO_LIBROS = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
     {"titulo": "El libro troll", "autor": "el rubius", "categoria": "historico"},
@@ -11,8 +40,131 @@ INVENTARIO_LIBROS = [
     {"titulo": "La Odisea", "autor": "Homero", "categoria": "Épica"},
 ]
 
-HTML_PAGE = f"""
-<!DOCTYPE html>
+def _next_id(kind: str) -> int:
+    global _next_book_id, _next_user_id
+    if kind == "book":
+        val = _next_book_id
+        _next_book_id += 1
+        return val
+    if kind == "user":
+        val = _next_user_id
+        _next_user_id += 1
+        return val
+    raise RuntimeError("unknown id kind")
+
+# Poblado inicial (tomado de tu HTML original)
+initial_books = [
+    {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
+    {"titulo": "El libro troll", "autor": "el rubius", "categoria": "Historico"},
+    {"titulo": "1984", "autor": "George Orwell", "categoria": "Distopía"},
+    {"titulo": "Don Quijote de la Mancha", "autor": "Miguel de Cervantes", "categoria": "Clásico"},
+    {"titulo": "La Odisea", "autor": "Homero", "categoria": "Épica"},
+]
+
+for b in initial_books:
+    book = {
+        "id": next_book_id(),
+        "titulo": b["titulo"],
+        "autor": b["autor"],
+        "categoria": b["categoria"],
+    }
+    STORES["books"].append(book)
+
+# ---------------------------
+# == Schemas (Pydantic)
+# ---------------------------
+class BookCreate(BaseModel):
+    titulo: str = Field(..., min_length=1)
+    autor: str = Field(..., min_length=1)
+    categoria: str = Field(..., min_length=1)
+
+class BookUpdate(BaseModel):
+    titulo: Optional[str]
+    autor: Optional[str]
+    categoria: Optional[str]
+
+class BookOut(BaseModel):
+    id: int
+    titulo: str
+    autor: str
+    categoria: str
+
+class UserCreate(BaseModel):
+    nombre: str = Field(..., min_length=1)
+    email: EmailStr
+    clave: str = Field(..., min_length=6)
+
+class UserOut(BaseModel):
+    id: int
+    nombre: str
+    email: EmailStr
+
+class TokenOut(BaseModel):
+    token: str
+
+class ReviewCreate(BaseModel):
+    texto: str = Field(..., min_length=1)
+    cal: int = Field(..., ge=1, le=5)
+
+class ReviewOut(BaseModel):
+    usuario_id: int
+    texto: str
+    cal: int
+
+# ---------------------------
+# == Utilidades (hash, auth)
+# ---------------------------
+def _hash_password(clave: str) -> str:
+    return hashlib.sha256(clave.encode("utf-8")).hexdigest()
+
+def _get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    for u in STORES["users"]:
+        if u["email"].lower() == email.lower():
+            return u
+    return None
+
+def _get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
+    for u in STORES["users"]:
+        if u["id"] == uid:
+            return u
+    return None
+
+def authenticate_user(email: str, clave: str) -> Optional[Dict[str, Any]]:
+    user = _get_user_by_email(email)
+    if not user:
+        return None
+    if user["password_hash"] != _hash_password(clave):
+        return None
+    return user
+
+def create_token_for_user(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    STORES["tokens"][token] = user_id
+    return token
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """
+    Dependency to get current user from header Authorization: Bearer <token>
+    Raises HTTPException 401 if invalid/missing.
+    """
+    if not authorization:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
+    token = parts[1]
+    user_id = STORES["tokens"].get(token)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    user = _get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
+
+# ---------------------------
+# == HTML frontend (mantengo tu página)
+# ---------------------------
+HTML_PAGE = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -389,13 +541,166 @@ HTML_PAGE = f"""
     }}
   </script>
 </body>
-</html>
-"""
+</html>"""
+# Para brevedad en este snippet lo oculto; en tu archivo final puedes usar el HTML que ya tenías.
+# (En el ejemplo real que pegues en tu proyecto, copia la variable HTML_PAGE completa desde tu main.py original.)
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(HTML_PAGE)
 
+# ---------------------------
+# == Endpoints API v1 - Libros
+# ---------------------------
+@app.get("/api/v1/libros", response_model=List[BookOut])
+def listar_libros(
+    page: int = 1,
+    limit: int = 20,
+    categoria: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: Optional[str] = None,
+):
+    """
+    Listar libros con paginación básica, filtrado por categoría y búsqueda por título/autor.
+    """
+    items = STORES["books"].copy()
+
+    # filtro
+    if categoria:
+        items = [b for b in items if b["categoria"].lower() == categoria.lower()]
+
+    if search:
+        q = search.lower()
+        items = [b for b in items if q in b["titulo"].lower() or q in b["autor"].lower()]
+
+    # sort: ejemplo "titulo:asc" o "id:desc"
+    if sort:
+        try:
+            field, direction = sort.split(":")
+            reverse = direction.lower() == "desc"
+            items.sort(key=lambda x: x.get(field, ""), reverse=reverse)
+        except Exception:
+            pass
+
+    # paginación
+    start = (page - 1) * limit
+    end = start + limit
+    return items[start:end]
+
+@app.post("/api/v1/libros", status_code=status.HTTP_201_CREATED, response_model=BookOut)
+def crear_libro(payload: BookCreate, user=Depends(get_current_user)):
+    """
+    Crear un libro (requiere autenticación).
+    """
+    book = {
+        "id": next_book_id(),
+        "titulo": payload.titulo,
+        "autor": payload.autor,
+        "categoria": payload.categoria,
+    }
+    STORES["books"].append(book)
+    return book
+
+@app.get("/api/v1/libros/{libro_id}", response_model=BookOut)
+def obtener_libro(libro_id: int):
+    for b in STORES["books"]:
+        if b["id"] == libro_id:
+            return b
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+
+@app.put("/api/v1/libros/{libro_id}", response_model=BookOut)
+def actualizar_libro(libro_id: int, payload: BookUpdate, user=Depends(get_current_user)):
+    for b in STORES["books"]:
+        if b["id"] == libro_id:
+            if payload.titulo is not None:
+                b["titulo"] = payload.titulo
+            if payload.autor is not None:
+                b["autor"] = payload.autor
+            if payload.categoria is not None:
+                b["categoria"] = payload.categoria
+            return b
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+
+@app.delete("/api/v1/libros/{libro_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_libro(libro_id: int, user=Depends(get_current_user)):
+    for i, b in enumerate(STORES["books"]):
+        if b["id"] == libro_id:
+            STORES["books"].pop(i)
+            # eliminar reseñas asociadas
+            STORES["reviews"].pop(str(libro_id), None)
+            return
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+
+# ---------------------------
+# == Endpoints - Reseñas (anidadas)
+# ---------------------------
+@app.get("/api/v1/libros/{libro_id}/reseñas", response_model=List[ReviewOut])
+def listar_reseñas(libro_id: int):
+    key = str(libro_id)
+    return STORES["reviews"].get(key, [])
+
+@app.post("/api/v1/libros/{libro_id}/reseñas", status_code=status.HTTP_201_CREATED, response_model=ReviewOut)
+def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current_user)):
+    # valida existencia libro
+    if not any(b["id"] == libro_id for b in STORES["books"]):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    key = str(libro_id)
+    rec = {"usuario_id": user["id"], "texto": payload.texto, "cal": payload.cal}
+    STORES["reviews"].setdefault(key, []).append(rec)
+    return rec
+
+# ---------------------------
+# == Usuarios & Auth (simple)
+# ---------------------------
+@app.post("/api/v1/usuarios", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+def registrar_usuario(payload: UserCreate):
+    if _get_user_by_email(payload.email):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email ya registrado")
+    user = {
+        "id": next_user_id(),
+        "nombre": payload.nombre,
+        "email": payload.email,
+        "password_hash": _hash_password(payload.clave),
+        "biblioteca": [],  # lista de book ids
+    }
+    STORES["users"].append(user)
+    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
+
+@app.post("/api/v1/auth/login", response_model=TokenOut)
+def login(email: EmailStr, clave: str):
+    user = authenticate_user(email, clave)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
+    token = create_token_for_user(user["id"])
+    return {"token": token}
+
+@app.get("/api/v1/auth/me", response_model=UserOut)
+def who_am_i(user=Depends(get_current_user)):
+    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
+
+# ---------------------------
+# == Operaciones de biblioteca personal (agregar/quitar libro)
+# ---------------------------
+@app.post("/api/v1/usuarios/me/biblioteca/{libro_id}", status_code=status.HTTP_200_OK)
+def agregar_a_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
+    if not any(b["id"] == libro_id for b in STORES["books"]):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    if libro_id in user["biblioteca"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Libro ya en biblioteca")
+    user["biblioteca"].append(libro_id)
+    return {"message": "Libro agregado"}
+
+@app.delete("/api/v1/usuarios/me/biblioteca/{libro_id}", status_code=status.HTTP_200_OK)
+def quitar_de_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
+    if libro_id not in user["biblioteca"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no está en tu biblioteca")
+    user["biblioteca"].remove(libro_id)
+    return {"message": "Libro eliminado"}
+
+# ---------------------------
+# == Run
+# ---------------------------
 if __name__ == "__main__":
-    import uvicorn, os
+    import uvicorn
     puerto = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=puerto)
