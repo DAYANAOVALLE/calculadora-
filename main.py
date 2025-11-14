@@ -18,7 +18,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 _next_book_id = 6  
 _next_user_id = 1
 
@@ -37,9 +36,10 @@ def next_user_id() -> int:
 STORES = {
     "books": [],
     "users": [],
-    "reviews": {},   
+    "reviews": {}, 
     "tokens": {},    
 }
+
 initial_books = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
     {"titulo": "El libro troll", "autor": "el rubius", "categoria": "Historico"},
@@ -55,7 +55,6 @@ for i, b in enumerate(initial_books, start=1):
         "autor": b["autor"],
         "categoria": b["categoria"],
     })
- 
 if len(STORES["books"]) >= _next_book_id:
     _next_book_id = len(STORES["books"]) + 1
 
@@ -124,7 +123,6 @@ class LogObserver(ObserverBase):
 
 class EmailObserver(ObserverBase):
     def update(self, event: str, data: Dict[str, Any]):
-        # Simulación de envío de correo (o push). En prod, aquí llamas a un servicio real.
         print(f"[EMAIL] Notificación ({event}) enviada con payload: {data}")
 
 event_subject = EventSubject()
@@ -165,6 +163,7 @@ class LibraryFacade:
         for i, b in enumerate(self.store["books"]):
             if b["id"] == libro_id:
                 removed = self.store["books"].pop(i)
+                # eliminar reseñas asociadas
                 self.store["reviews"].pop(str(libro_id), None)
                 self.events.notify("LIBRO_ELIMINADO", removed)
                 return True
@@ -181,7 +180,7 @@ class LibraryFacade:
             q = search.lower()
             items = [b for b in items if q in b["titulo"].lower() or q in b["autor"].lower()]
         return items
-
+    
     def add_review(self, libro_id: int, usuario_id: int, texto: str, cal: int) -> Dict[str, Any]:
         key = str(libro_id)
         rec = {"usuario_id": usuario_id, "texto": texto, "cal": cal}
@@ -244,8 +243,7 @@ admin_default = {
 }
 
 STORES["users"].append(admin_default)
-print("🟢 Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
-
+print(" Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="es">
@@ -412,13 +410,13 @@ HTML_PAGE = """<!DOCTYPE html>
         // Mostrar u ocultar sección de agregar libros según el rol
         const agregarLibroSection = document.querySelector('#panelUsuario h2:nth-of-type(3)').parentElement.querySelectorAll('h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, button:last-of-type');
         if (userRole === 'admin') {
-          alert('✅ Bienvenido Administrador');
+          alert('Bienvenido Administrador');
         } else {
           // Ocultar formulario de agregar libros para usuarios normales
           document.querySelectorAll('#panelUsuario > h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #panelUsuario > button:last-of-type').forEach(el => {
             el.style.display = 'none';
           });
-          alert('✅ Bienvenido Usuario');
+          alert('Bienvenido Usuario');
         }
         
         await cargarCatalogo();
@@ -691,6 +689,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(HTML_PAGE)
@@ -732,7 +731,6 @@ def eliminar_libro(libro_id: int, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Libro no encontrado")
     return None
 
-# Reseñas
 @app.get("/api/v1/libros/{libro_id}/reseñas", response_model=List[ReviewOut])
 def listar_reseñas(libro_id: int):
     return STORES["reviews"].get(str(libro_id), [])
@@ -745,11 +743,23 @@ def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current
     return rec
 
 @app.post("/api/v1/usuarios", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def registrar_usuario(payload: UserCreate, current: Optional[Dict[str, Any]] = None):
+def registrar_usuario(payload: UserCreate):
     if _get_user_by_email(payload.email):
         raise HTTPException(status_code=409, detail="Email ya registrado")
-    user = facade.register_user(payload.nombre, payload.email, _hash_password(payload.clave), payload.rol)
-    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"], "rol": user["rol"]}
+
+    user = facade.register_user(
+        payload.nombre,
+        payload.email.strip().lower(),
+        _hash_password(payload.clave),
+        payload.rol
+    )
+
+    return {
+        "id": user["id"],
+        "nombre": user["nombre"],
+        "email": user["email"],
+        "rol": user["rol"]
+    }
 
 @app.post("/api/v1/auth/login")
 def login(payload: LoginInput):
