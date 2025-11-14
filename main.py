@@ -1,53 +1,45 @@
-from fastapi import FastAPI, HTTPException, status, Depends, Header
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import secrets
 import hashlib
 import os
 
+security = HTTPBearer()
 app = FastAPI(title="Sistema Biblioteca - API RESTful")
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-_next_book_id = 1
-next_book_id = lambda: _next_id("book")
+_next_book_id = 6  
 _next_user_id = 1
-next_user_id = lambda: _next_id("user")
+
+def next_book_id() -> int:
+    global _next_book_id
+    val = _next_book_id
+    _next_book_id += 1
+    return val
+
+def next_user_id() -> int:
+    global _next_user_id
+    val = _next_user_id
+    _next_user_id += 1
+    return val
 
 STORES = {
-    "books": [],      
-    "users": [],      
+    "books": [],
+    "users": [],
     "reviews": {},   
     "tokens": {},    
 }
-INVENTARIO_LIBROS = [
-    {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
-    {"titulo": "El libro troll", "autor": "el rubius", "categoria": "historico"},
-    {"titulo": "1984", "autor": "George Orwell", "categoria": "Distopía"},
-    {"titulo": "Don Quijote de la Mancha", "autor": "Miguel de Cervantes", "categoria": "Clásico"},
-    {"titulo": "La Odisea", "autor": "Homero", "categoria": "Épica"},
-]
-
-def _next_id(kind: str) -> int:
-    global _next_book_id, _next_user_id
-    if kind == "book":
-        val = _next_book_id
-        _next_book_id += 1
-        return val
-    if kind == "user":
-        val = _next_user_id
-        _next_user_id += 1
-        return val
-    raise RuntimeError("unknown id kind")
-
 initial_books = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
     {"titulo": "El libro troll", "autor": "el rubius", "categoria": "Historico"},
@@ -56,14 +48,16 @@ initial_books = [
     {"titulo": "La Odisea", "autor": "Homero", "categoria": "Épica"},
 ]
 
-for b in initial_books:
-    book = {
-        "id": next_book_id(),
+for i, b in enumerate(initial_books, start=1):
+    STORES["books"].append({
+        "id": i,
         "titulo": b["titulo"],
         "autor": b["autor"],
         "categoria": b["categoria"],
-    }
-    STORES["books"].append(book)
+    })
+ 
+if len(STORES["books"]) >= _next_book_id:
+    _next_book_id = len(STORES["books"]) + 1
 
 class BookCreate(BaseModel):
     titulo: str = Field(..., min_length=1)
@@ -71,9 +65,9 @@ class BookCreate(BaseModel):
     categoria: str = Field(..., min_length=1)
 
 class BookUpdate(BaseModel):
-    titulo: Optional[str]
-    autor: Optional[str]
-    categoria: Optional[str]
+    titulo: Optional[str] = None
+    autor: Optional[str] = None
+    categoria: Optional[str] = None
 
 class BookOut(BaseModel):
     id: int
@@ -85,14 +79,17 @@ class UserCreate(BaseModel):
     nombre: str = Field(..., min_length=1)
     email: EmailStr
     clave: str = Field(..., min_length=6)
+    rol: str = "usuario"
 
 class UserOut(BaseModel):
     id: int
     nombre: str
-    email: EmailStr
+    email: str
+    rol: str
 
-class TokenOut(BaseModel):
-    token: str
+class LoginInput(BaseModel):
+    email: EmailStr
+    clave: str = Field(..., min_length=1)
 
 class ReviewCreate(BaseModel):
     texto: str = Field(..., min_length=1)
@@ -103,572 +100,692 @@ class ReviewOut(BaseModel):
     texto: str
     cal: int
 
+class EventSubject:
+    def __init__(self):
+        self._observers: List[Any] = []
+
+    def subscribe(self, observer: Any):
+        self._observers.append(observer)
+
+    def notify(self, event: str, data: Dict[str, Any]):
+        for obs in self._observers:
+            try:
+                obs.update(event, data)
+            except Exception as e:
+                print(f"[EventSubject] Error notificando observer: {e}")
+
+class ObserverBase:
+    def update(self, event: str, data: Dict[str, Any]):
+        raise NotImplementedError
+
+class LogObserver(ObserverBase):
+    def update(self, event: str, data: Dict[str, Any]):
+        print(f"[LOG] Evento: {event} -> {data}")
+
+class EmailObserver(ObserverBase):
+    def update(self, event: str, data: Dict[str, Any]):
+        # Simulación de envío de correo (o push). En prod, aquí llamas a un servicio real.
+        print(f"[EMAIL] Notificación ({event}) enviada con payload: {data}")
+
+event_subject = EventSubject()
+event_subject.subscribe(LogObserver())
+event_subject.subscribe(EmailObserver())
+
+class LibraryFacade:
+    def __init__(self, store: Dict[str, Any], events: EventSubject):
+        self.store = store
+        self.events = events
+
+    # Libros
+    def add_book(self, titulo: str, autor: str, categoria: str) -> Dict[str, Any]:
+        book = {
+            "id": next_book_id(),
+            "titulo": titulo,
+            "autor": autor,
+            "categoria": categoria
+        }
+        self.store["books"].append(book)
+        self.events.notify("LIBRO_CREADO", book)
+        return book
+
+    def update_book(self, libro_id: int, changes: Dict[str, Optional[str]]) -> Optional[Dict[str, Any]]:
+        for b in self.store["books"]:
+            if b["id"] == libro_id:
+                if changes.get("titulo") is not None:
+                    b["titulo"] = changes["titulo"]
+                if changes.get("autor") is not None:
+                    b["autor"] = changes["autor"]
+                if changes.get("categoria") is not None:
+                    b["categoria"] = changes["categoria"]
+                self.events.notify("LIBRO_ACTUALIZADO", b)
+                return b
+        return None
+
+    def delete_book(self, libro_id: int) -> bool:
+        for i, b in enumerate(self.store["books"]):
+            if b["id"] == libro_id:
+                removed = self.store["books"].pop(i)
+                self.store["reviews"].pop(str(libro_id), None)
+                self.events.notify("LIBRO_ELIMINADO", removed)
+                return True
+        return False
+
+    def get_book(self, libro_id: int) -> Optional[Dict[str, Any]]:
+        return next((b for b in self.store["books"] if b["id"] == libro_id), None)
+
+    def list_books(self, categoria: Optional[str] = None, search: Optional[str] = None) -> List[Dict[str, Any]]:
+        items = self.store["books"].copy()
+        if categoria:
+            items = [b for b in items if b["categoria"].lower() == categoria.lower()]
+        if search:
+            q = search.lower()
+            items = [b for b in items if q in b["titulo"].lower() or q in b["autor"].lower()]
+        return items
+
+    def add_review(self, libro_id: int, usuario_id: int, texto: str, cal: int) -> Dict[str, Any]:
+        key = str(libro_id)
+        rec = {"usuario_id": usuario_id, "texto": texto, "cal": cal}
+        self.store["reviews"].setdefault(key, []).append(rec)
+        self.events.notify("RESEÑA_AGREGADA", {"libro_id": libro_id, **rec})
+        return rec
+
+    def register_user(self, nombre: str, email: str, password_hash: str, rol: str = "usuario") -> Dict[str, Any]:
+        user = {
+            "id": next_user_id(),
+            "nombre": nombre,
+            "email": email,
+            "password_hash": password_hash,
+            "rol": rol,
+            "biblioteca": []
+        }
+        self.store["users"].append(user)
+        self.events.notify("USUARIO_REGISTRADO", {"id": user["id"], "email": user["email"], "rol": user["rol"]})
+        return user
+
+    def authenticate(self, email: str, clave_plain: str) -> Optional[Dict[str, Any]]:
+        user = next((u for u in self.store["users"] if u["email"].lower() == email.lower()), None)
+        if not user:
+            return None
+        if user.get("password_hash") != _hash_password(clave_plain):
+            return None
+        return user
+
+facade = LibraryFacade(STORES, event_subject)
+
 def _hash_password(clave: str) -> str:
     return hashlib.sha256(clave.encode("utf-8")).hexdigest()
 
 def _get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
-    for u in STORES["users"]:
-        if u["email"].lower() == email.lower():
-            return u
-    return None
+    return next((u for u in STORES["users"] if u["email"].lower() == email.lower()), None)
 
-def _get_user_by_id(uid: int) -> Optional[Dict[str, Any]]:
-    for u in STORES["users"]:
-        if u["id"] == uid:
-            return u
-    return None
-
-def authenticate_user(email: str, clave: str) -> Optional[Dict[str, Any]]:
-    user = _get_user_by_email(email)
-    if not user:
-        return None
-    if user["password_hash"] != _hash_password(clave):
-        return None
-    return user
-
-def create_token_for_user(user_id: int) -> str:
-    token = secrets.token_urlsafe(32)
-    STORES["tokens"][token] = user_id
-    return token
-
-def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    """
-    Dependency to get current user from header Authorization: Bearer <token>
-    Raises HTTPException 401 if invalid/missing.
-    """
-    if not authorization:
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header required")
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header")
-    token = parts[1]
+    token = credentials.credentials
     user_id = STORES["tokens"].get(token)
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    user = _get_user_by_id(user_id)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado")
+    user = next((u for u in STORES["users"] if u["id"] == user_id), None)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
     return user
 
-# ---------------------------
-# == HTML frontend (mantengo tu página)
-# ---------------------------
-HTML_PAGE = f"""<!DOCTYPE html>
+def admin_required(user: dict):
+    if user.get("rol") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo administradores pueden realizar esta acción")
+    
+admin_default = {
+    "id": next_user_id(),
+    "nombre": "Administrador",
+    "email": "admin@biblioteca.com",
+    "password_hash": _hash_password("admin123"),  # contraseña por defecto
+    "rol": "admin",
+    "biblioteca": []
+}
+
+STORES["users"].append(admin_default)
+print("🟢 Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
+
+
+HTML_PAGE = """<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Biblioteca Personal</title>
   <style>
-    /* Fondo estilo papel antiguo */
-    body {{
+    body {
       font-family: 'Arial', sans-serif;
       background-color: #f5f1e9;
-      background-image:
-        radial-gradient(circle at 50% 50%, #f7f3eb 5%, transparent 25%),
-        radial-gradient(circle at 25% 25%, #f1e8dc 5%, transparent 20%);
-      background-repeat: repeat;
       margin: 0;
       padding: 0;
       display: flex;
       justify-content: center;
       min-height: 100vh;
-      align-items: flex-start;
       padding-top: 30px;
-    }}
-
-    .container {{
+    }
+    .container {
       background: #fffdfa;
       max-width: 700px;
       width: 90%;
       padding: 25px 35px;
       border-radius: 12px;
       box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-      box-sizing: border-box;
-      text-align: center;
-    }}
-
-    h1, h2, h3, h4 {{
-      color: #3a4d24;
-      margin-bottom: 20px;
-      font-weight: 700;
-      font-family: 'Georgia', serif;
-    }}
-
-    input, textarea, select, button {{
+    }
+    h1, h2, h3 { color: #3a4d24; }
+    input, textarea, button {
       width: 100%;
-      padding: 12px 15px;
+      padding: 12px;
       margin: 10px 0;
       border-radius: 8px;
-      border: 1.8px solid #9caf88;
+      border: 2px solid #9caf88;
       font-size: 16px;
-      font-family: 'Arial', sans-serif;
       box-sizing: border-box;
-      transition: border-color 0.3s ease;
-    }}
-
-    input:focus, textarea:focus, select:focus {{
-      outline: none;
-      border-color: #5a7d30;
-      background-color: #f7f9f3;
-    }}
-
-    button {{
+    }
+    button {
       background-color: #4caf50;
       color: white;
       border: none;
       cursor: pointer;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
-      transition: background-color 0.3s ease;
-      max-width: 250px;
-      margin-left: auto;
-      margin-right: auto;
-      display: block;
-    }}
-
-    button:hover {{
-      background-color: #388e3c;
-    }}
-
-    #panelUsuario, #detalleLibro, #registro {{
-      display: none;
-      margin-top: 30px;
-      text-align: left;
-    }}
-
-    #catalogoGlobal div, #miBiblioteca div {{
+      font-weight: bold;
+    }
+    button:hover { background-color: #388e3c; }
+    #panelUsuario, #detalleLibro, #registro { display: none; margin-top: 20px; }
+    .libro-item {
       padding: 15px;
       margin: 8px 0;
       background-color: #e7ebd1;
-      border: 1.6px solid #b6c78a;
+      border: 2px solid #b6c78a;
       border-radius: 8px;
-      font-family: 'Georgia', serif;
-      color: #3a4d24;
       display: flex;
       justify-content: space-between;
       align-items: center;
-    }}
-
-    #catalogoGlobal div:hover, #miBiblioteca div:hover {{
-      background-color: #d4dbb4;
-    }}
-
-    .detalle {{
-      background-color: #fff8dc;
-      border: 1.8px solid #f0e68c;
-      padding: 20px;
-      margin-top: 20px;
-      border-radius: 8px;
-      color: #6b5e00;
-      font-family: 'Georgia', serif;
-    }}
-
-    /* Botones en los listados */
-    #catalogoGlobal button, #miBiblioteca button {{
+    }
+    .libro-item:hover { background-color: #d4dbb4; }
+    .btn-small {
       width: auto;
       padding: 7px 12px;
-      margin-left: 10px;
-      border-radius: 6px;
+      margin-left: 5px;
       font-size: 14px;
-      background-color: #6aaa4f;
-      box-shadow: 0 3px 6px rgba(106, 170, 79, 0.4);
-    }}
-
-    #catalogoGlobal button:hover, #miBiblioteca button:hover {{
-      background-color: #488235;
-    }}
-
-    /* Botón cerrar sesión */
-    #cerrarSecion {{
-      margin-top: 20px;
-      max-width: 150px;
+    }
+    #cerrarSesion {
       background-color: #a44c4c;
-      box-shadow: 0 4px 8px rgba(164, 76, 76, 0.4);
-    }}
-
-    #cerrarSecion:hover {{
-      background-color: #7a3939;
-    }}
+      max-width: 150px;
+      margin: 20px auto;
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Biblioteca Personal</h1>
+    <h1>📚 Biblioteca Personal</h1>
 
     <div id="login">
-      <h2>Ingresar usuario</h2>
-      <input type="text" id="usuario" placeholder="Nombre de usuario" autocomplete="username" />
-      <input type="password" id="clave" placeholder="Contraseña" autocomplete="current-password" />
+      <h2>Iniciar Sesión</h2>
+      <input type="email" id="loginEmail" placeholder="Email" />
+      <input type="password" id="loginClave" placeholder="Contraseña" />
       <button onclick="login()">Ingresar</button>
-      <button onclick="mostrarRegistro()">Registrar usuario</button>
+      <button onclick="mostrarRegistro()">Registrar Usuario</button>
     </div>
 
     <div id="registro">
       <h2>Registrar Usuario</h2>
-      <input type="text" id="nuevoNombre" placeholder="Nombre" />
-      <input type="password" id="nuevaClave" placeholder="Contraseña" />
-      <button onclick="agregarUsuario()">Registrar</button>
+      <input type="text" id="regNombre" placeholder="Nombre" />
+      <input type="email" id="regEmail" placeholder="Email" />
+      <input type="password" id="regClave" placeholder="Contraseña (mín. 6 caracteres)" />
+      <button onclick="registrarUsuario()">Registrar</button>
       <button onclick="volverLogin()">Volver</button>
     </div>
 
     <div id="panelUsuario">
-      <h2>Biblioteca Global</h2>
+      <h2>Catálogo Global</h2>
       <div id="catalogoGlobal"></div>
 
       <h2>Mi Biblioteca</h2>
       <div id="miBiblioteca"></div>
 
-      <h2>Agregar Libro Nuevo</h2>
-      <input type="text" id="titulo" placeholder="Título del libro" />
-      <input type="text" id="autor" placeholder="Autor" />
-      <input type="text" id="categoria" placeholder="Categoría" />
-      <button onclick="agregarLibroGlobal()">Agregar Libro</button>
+      <h2>Agregar Nuevo Libro</h2>
+      <input type="text" id="nuevoTitulo" placeholder="Título" />
+      <input type="text" id="nuevoAutor" placeholder="Autor" />
+      <input type="text" id="nuevaCategoria" placeholder="Categoría" />
+      <button onclick="agregarLibro()">Agregar Libro</button>
     </div>
 
     <div id="detalleLibro">
       <h3 id="tituloDetalle"></h3>
       <p id="autorDetalle"></p>
       <p id="categoriaDetalle"></p>
-
       <textarea id="reseñaTexto" placeholder="Escribe tu reseña..."></textarea>
-      <input type="number" id="calificacion" min="1" max="5" placeholder="Calificación (1 a 5)" />
+      <input type="number" id="calificacion" min="1" max="5" placeholder="Calificación (1-5)" />
       <button onclick="guardarReseña()">Guardar Reseña</button>
-
       <h4>Reseñas:</h4>
       <ul id="listaReseñas"></ul>
+      <button onclick="cerrarDetalle()">Cerrar</button>
     </div>
 
-    <button id="cerrarSecion" style="display:none;" onclick="logout()">Cerrar sesión</button>
+    <button id="cerrarSesion" onclick="logout()">Cerrar Sesión</button>
   </div>
 
   <script>
-    // Inventario inicial, solo si no existe ya en localStorage
-    if (!localStorage.getItem("librosGlobal")) {{
-      localStorage.setItem("librosGlobal", JSON.stringify({INVENTARIO_LIBROS}));
-    }}
-
-    let usuarios = JSON.parse(localStorage.getItem("usuarios")) || [];
-    let usuarioActual = null;
-    let librosGlobal = JSON.parse(localStorage.getItem("librosGlobal")) || [];
-    let reseñas = JSON.parse(localStorage.getItem("reseñas")) || {{}};
+    let token = null;
+    let userRole = null;  // ← Guardamos el rol del usuario
     let libroSeleccionado = null;
+    let misBibliotecaIds = [];
 
-    function guardarDatos() {{
-      localStorage.setItem("usuarios", JSON.stringify(usuarios));
-      localStorage.setItem("librosGlobal", JSON.stringify(librosGlobal));
-      localStorage.setItem("reseñas", JSON.stringify(reseñas));
-    }}
+    const API = '/api/v1';
 
-    function login() {{
-      const nombre = document.getElementById("usuario").value.trim();
-      const clave = document.getElementById("clave").value;
-      const user = usuarios.find(u => u.nombre === nombre && u.clave === clave);
-      if (!user) {{
-        alert("Usuario o clave incorrecta");
+    async function request(url, options = {}) {
+      if (token && !options.headers) {
+        options.headers = {};
+      }
+      if (token) {
+        options.headers['Authorization'] = `Bearer ${token}`;
+      }
+      options.headers = options.headers || {};
+      options.headers['Content-Type'] = 'application/json';
+      
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({detail: 'Error desconocido'}));
+        throw new Error(error.detail || 'Error en la petición');
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    async function login() {
+      const email = document.getElementById('loginEmail').value.trim();
+      const clave = document.getElementById('loginClave').value;
+      
+      try {
+        const data = await request(`${API}/auth/login`, {
+          method: 'POST',
+          body: JSON.stringify({email, clave})
+        });
+        
+        token = data.token;
+        userRole = data.rol;  // ← Guardamos el rol
+        
+        document.getElementById('login').style.display = 'none';
+        document.getElementById('panelUsuario').style.display = 'block';
+        document.getElementById('cerrarSesion').style.display = 'block';
+        
+        // Mostrar u ocultar sección de agregar libros según el rol
+        const agregarLibroSection = document.querySelector('#panelUsuario h2:nth-of-type(3)').parentElement.querySelectorAll('h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, button:last-of-type');
+        if (userRole === 'admin') {
+          alert('✅ Bienvenido Administrador');
+        } else {
+          // Ocultar formulario de agregar libros para usuarios normales
+          document.querySelectorAll('#panelUsuario > h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #panelUsuario > button:last-of-type').forEach(el => {
+            el.style.display = 'none';
+          });
+          alert('✅ Bienvenido Usuario');
+        }
+        
+        await cargarCatalogo();
+        await cargarMiBiblioteca();
+      } catch (err) {
+        alert('Error al iniciar sesión: ' + err.message);
+      }
+    }
+
+    function mostrarRegistro() {
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('registro').style.display = 'block';
+    }
+
+    function volverLogin() {
+      document.getElementById('registro').style.display = 'none';
+      document.getElementById('login').style.display = 'block';
+    }
+
+    async function registrarUsuario() {
+      const nombre = document.getElementById('regNombre').value.trim();
+      const email = document.getElementById('regEmail').value.trim();
+      const clave = document.getElementById('regClave').value;
+      
+      try {
+        await request(`${API}/usuarios`, {
+          method: 'POST',
+          body: JSON.stringify({nombre, email, clave, rol: 'usuario'})
+        });
+        
+        alert('Usuario registrado exitosamente');
+        volverLogin();
+      } catch (err) {
+        alert('Error al registrar: ' + err.message);
+      }
+    }
+
+    function logout() {
+      token = null;
+      userRole = null;  // ← Limpiar rol
+      document.getElementById('login').style.display = 'block';
+      document.getElementById('panelUsuario').style.display = 'none';
+      document.getElementById('cerrarSesion').style.display = 'none';
+      document.getElementById('loginEmail').value = '';
+      document.getElementById('loginClave').value = '';
+      
+      // Mostrar de nuevo el formulario de agregar libros (para próximo login)
+      document.querySelectorAll('#panelUsuario > h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #panelUsuario > button:last-of-type').forEach(el => {
+        el.style.display = 'block';
+      });
+    }
+
+    async function cargarCatalogo() {
+      try {
+        const libros = await request(`${API}/libros`);
+        const cont = document.getElementById('catalogoGlobal');
+        cont.innerHTML = '';
+        
+        libros.forEach(libro => {
+          const div = document.createElement('div');
+          div.className = 'libro-item';
+          
+          // Botones según el rol del usuario
+          let botonesHTML = `
+            <button class="btn-small" onclick="agregarAMiBiblioteca(${libro.id})">Agregar</button>
+            <button class="btn-small" onclick="verDetalle(${libro.id})">Ver</button>
+          `;
+          
+          // Solo admin puede editar y eliminar
+          if (userRole === 'admin') {
+            botonesHTML += `
+              <button class="btn-small" onclick="editarLibro(${libro.id})" style="background-color: #ff9800;">Editar</button>
+              <button class="btn-small" onclick="eliminarLibro(${libro.id})" style="background-color: #f44336;">Eliminar</button>
+            `;
+          }
+          
+          div.innerHTML = `
+            <div><strong>${libro.titulo}</strong> - ${libro.autor} (${libro.categoria})</div>
+            <div>${botonesHTML}</div>
+          `;
+          cont.appendChild(div);
+        });
+      } catch (err) {
+        alert('Error al cargar catálogo: ' + err.message);
+      }
+    }
+
+    async function cargarMiBiblioteca() {
+      try {
+        const libros = await request(`${API}/usuarios/me/biblioteca`);
+        const cont = document.getElementById('miBiblioteca');
+        cont.innerHTML = '';
+        
+        if (libros.length === 0) {
+          cont.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">📚 Tu biblioteca está vacía. Agrega libros desde el catálogo global.</p>';
+          return;
+        }
+        
+        libros.forEach(libro => {
+          const div = document.createElement('div');
+          div.className = 'libro-item';
+          div.innerHTML = `
+            <div><strong>${libro.titulo}</strong> - ${libro.autor} (${libro.categoria})</div>
+            <div>
+              <button class="btn-small" onclick="verDetalle(${libro.id})">Ver detalle</button>
+              <button class="btn-small" onclick="quitarDeMiBiblioteca(${libro.id})" style="background-color: #f44336;">Quitar</button>
+            </div>
+          `;
+          cont.appendChild(div);
+        });
+      } catch (err) {
+        const cont = document.getElementById('miBiblioteca');
+        cont.innerHTML = '<p style="color: #f44336;">Error al cargar tu biblioteca: ' + err.message + '</p>';
+      }
+    }
+
+    async function agregarLibro() {
+      const titulo = document.getElementById('nuevoTitulo').value.trim();
+      const autor = document.getElementById('nuevoAutor').value.trim();
+      const categoria = document.getElementById('nuevaCategoria').value.trim();
+      
+      if (!titulo || !autor || !categoria) {
+        alert('Completa todos los campos');
         return;
-      }}
-      usuarioActual = user;
-      document.getElementById("login").style.display = "none";
-      document.getElementById("registro").style.display = "none";
-      document.getElementById("panelUsuario").style.display = "block";
-      document.getElementById("cerrarSecion").style.display = "block";
-      mostrarCatalogoGlobal();
-      mostrarMiBiblioteca();
-    }}
+      }
+      
+      try {
+        await request(`${API}/libros`, {
+          method: 'POST',
+          body: JSON.stringify({titulo, autor, categoria})
+        });
+        
+        document.getElementById('nuevoTitulo').value = '';
+        document.getElementById('nuevoAutor').value = '';
+        document.getElementById('nuevaCategoria').value = '';
+        
+        await cargarCatalogo();
+      } catch (err) {
+        if (err.message.includes('Solo administradores')) {
+          alert('❌ Solo los administradores pueden crear libros');
+        } else {
+          alert('Error al agregar libro: ' + err.message);
+        }
+      }
+    }
 
-    function mostrarRegistro() {{
-      document.getElementById("registro").style.display = "block";
-      document.getElementById("login").style.display = "none";
-    }}
+    async function agregarAMiBiblioteca(libroId) {
+      try {
+        await request(`${API}/usuarios/me/biblioteca/${libroId}`, {
+          method: 'POST'
+        });
+        alert('Libro agregado a tu biblioteca');
+        await cargarMiBiblioteca();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+    async function quitarDeMiBiblioteca(libroId) {
+      if (!confirm('¿Seguro que deseas quitar este libro de tu biblioteca?')) return;
 
-    function volverLogin() {{
-      document.getElementById("registro").style.display = "none";
-      document.getElementById("login").style.display = "block";
-    }}
+    try {
+      await request(`${API}/usuarios/me/biblioteca/${libroId}`, {
+        method: 'DELETE'
+     });
 
-    function agregarUsuario() {{
-      const nombre = document.getElementById("nuevoNombre").value.trim();
-      const clave = document.getElementById("nuevaClave").value;
-      if (!nombre || !clave) {{
-        alert("Completa todos los campos");
+     await cargarMiBiblioteca();
+    } catch (err) {
+      alert('Error al eliminar libro: ' + err.message);
+      }
+    }
+
+    async function verDetalle(libroId) {
+      try {
+        const libro = await request(`${API}/libros/${libroId}`);
+        const reseñas = await request(`${API}/libros/${libroId}/reseñas`);
+        
+        libroSeleccionado = libro;
+        document.getElementById('tituloDetalle').textContent = libro.titulo;
+        document.getElementById('autorDetalle').textContent = 'Autor: ' + libro.autor;
+        document.getElementById('categoriaDetalle').textContent = 'Categoría: ' + libro.categoria;
+        
+        const lista = document.getElementById('listaReseñas');
+        lista.innerHTML = '';
+        reseñas.forEach(r => {
+          const li = document.createElement('li');
+          li.textContent = `Usuario ${r.usuario_id}: "${r.texto}" (⭐${r.cal})`;
+          lista.appendChild(li);
+        });
+        
+        document.getElementById('detalleLibro').style.display = 'block';
+      } catch (err) {
+        alert('Error al cargar detalle: ' + err.message);
+      }
+    }
+
+    async function guardarReseña() {
+      const texto = document.getElementById('reseñaTexto').value.trim();
+      const cal = parseInt(document.getElementById('calificacion').value);
+      
+      if (!texto || !cal || cal < 1 || cal > 5) {
+        alert('Completa todos los campos correctamente');
         return;
-      }}
-      if (usuarios.some(u => u.nombre === nombre)) {{
-        alert("Nombre ya existe");
+      }
+      
+      try {
+        await request(`${API}/libros/${libroSeleccionado.id}/reseñas`, {
+          method: 'POST',
+          body: JSON.stringify({texto, cal})
+        });
+        
+        document.getElementById('reseñaTexto').value = '';
+        document.getElementById('calificacion').value = '';
+        alert('Reseña guardada ✅');
+        await verDetalle(libroSeleccionado.id);
+      } catch (err) {
+        alert('Error al guardar reseña: ' + err.message);
+      }
+    }
+
+    function cerrarDetalle() {
+      document.getElementById('detalleLibro').style.display = 'none';
+    }
+
+    async function editarLibro(libroId) {
+      try {
+        const libro = await request(`${API}/libros/${libroId}`);
+        
+        const nuevoTitulo = prompt('Nuevo título:', libro.titulo);
+        if (!nuevoTitulo) return;
+        
+        const nuevoAutor = prompt('Nuevo autor:', libro.autor);
+        if (!nuevoAutor) return;
+        
+        const nuevaCategoria = prompt('Nueva categoría:', libro.categoria);
+        if (!nuevaCategoria) return;
+        
+        await request(`${API}/libros/${libroId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            titulo: nuevoTitulo,
+            autor: nuevoAutor,
+            categoria: nuevaCategoria
+          })
+        });
+        
+        alert('✅ Libro actualizado exitosamente');
+        await cargarCatalogo();
+      } catch (err) {
+        alert('Error al editar libro: ' + err.message);
+      }
+    }
+
+    async function eliminarLibro(libroId) {
+      if (!confirm('¿Estás seguro de que deseas eliminar este libro?')) {
         return;
-      }}
-      usuarios.push({{ nombre, clave, biblioteca: [] }});
-      guardarDatos();
-      alert("Registrado exitosamente");
-      document.getElementById("registro").style.display = "none";
-      document.getElementById("login").style.display = "block";
-    }}
-
-    function logout() {{
-      usuarioActual = null;
-      document.getElementById("login").style.display = "block";
-      document.getElementById("registro").style.display = "none";
-      document.getElementById("panelUsuario").style.display = "none";
-      document.getElementById("cerrarSecion").style.display = "none";
-      document.getElementById("detalleLibro").style.display = "none";
-      document.getElementById("usuario").value = "";
-      document.getElementById("clave").value = "";
-    }}
-
-    function agregarLibroGlobal() {{
-      const titulo = document.getElementById("titulo").value.trim();
-      const autor = document.getElementById("autor").value.trim();
-      const categoria = document.getElementById("categoria").value.trim();
-      if (!titulo || !autor || !categoria) {{
-        alert("Completa todos los campos");
-        return;
-      }}
-      librosGlobal.push({{ titulo, autor, categoria }});
-      guardarDatos();
-      mostrarCatalogoGlobal();
-      // Limpiar inputs
-      document.getElementById("titulo").value = "";
-      document.getElementById("autor").value = "";
-      document.getElementById("categoria").value = "";
-    }}
-
-    function mostrarCatalogoGlobal() {{
-      const cont = document.getElementById("catalogoGlobal");
-      cont.innerHTML = "";
-      librosGlobal.forEach((libro, i) => {{
-        const div = document.createElement("div");
-        div.innerHTML = `<strong>${{libro.titulo}}</strong> - ${{libro.autor}} (${{libro.categoria}})
-          <div>
-            <button onclick="agregarAMiBiblioteca(${{i}})">Agregar a mi biblioteca</button>
-            <button onclick="verDetalle(${{i}})">Ver detalle</button>
-          </div>`;
-        cont.appendChild(div);
-      }});
-    }}
-
-    function agregarAMiBiblioteca(index) {{
-      const libro = librosGlobal[index];
-      if (!usuarioActual.biblioteca.some(l => l.titulo === libro.titulo && l.autor === libro.autor)) {{
-        usuarioActual.biblioteca.push(libro);
-        guardarDatos();
-        mostrarMiBiblioteca();
-      }} else {{
-        alert("Este libro ya está en tu biblioteca");
-      }}
-    }}
-
-    function mostrarMiBiblioteca() {{
-      const cont = document.getElementById("miBiblioteca");
-      cont.innerHTML = "";
-      usuarioActual.biblioteca.forEach((libro, i) => {{
-        const div = document.createElement("div");
-        div.innerHTML = `<strong>${{libro.titulo}}</strong> - ${{libro.autor}}
-          <div>
-            <button onclick="verDetalleDesdeMiBiblioteca(${{i}})">Ver detalle</button>
-            <button onclick="eliminarDeMiBiblioteca(${{i}})">Eliminar</button>
-          </div>`;
-        cont.appendChild(div);
-      }});
-    }}
-
-    function eliminarDeMiBiblioteca(index) {{
-      usuarioActual.biblioteca.splice(index, 1);
-      guardarDatos();
-      mostrarMiBiblioteca();
-    }}
-
-    function verDetalle(index) {{
-      const libro = librosGlobal[index];
-      mostrarDetalle(libro);
-    }}
-
-    function verDetalleDesdeMiBiblioteca(index) {{
-      const libro = usuarioActual.biblioteca[index];
-      mostrarDetalle(libro);
-    }}
-
-    function mostrarDetalle(libro) {{
-      libroSeleccionado = libro;
-      document.getElementById("tituloDetalle").textContent = libro.titulo;
-      document.getElementById("autorDetalle").textContent = "Autor: " + libro.autor;
-      document.getElementById("categoriaDetalle").textContent = "Categoría: " + libro.categoria;
-      document.getElementById("detalleLibro").style.display = "block";
-      mostrarReseñas();
-      // Scroll a detalle para mejor UX
-      document.getElementById("detalleLibro").scrollIntoView({{behavior: "smooth"}});
-    }}
-
-    function mostrarReseñas() {{
-      const list = document.getElementById("listaReseñas");
-      list.innerHTML = "";
-      const key = libroSeleccionado.titulo;
-      const reseñasLibro = reseñas[key] || [];
-      reseñasLibro.forEach(r => {{
-        const li = document.createElement("li");
-        li.textContent = `${{r.usuario}}: "${{r.texto}}" (Calificación: ${{r.cal}})`;
-        list.appendChild(li);
-      }});
-    }}
-
-    function guardarReseña() {{
-      const texto = document.getElementById("reseñaTexto").value.trim();
-      const cal = parseInt(document.getElementById("calificacion").value);
-      if (!texto || isNaN(cal) || cal < 1 || cal > 5) {{
-        alert("Completa todos los campos correctamente (texto y calificación de 1 a 5)");
-        return;
-      }}
-      const key = libroSeleccionado.titulo;
-      if (!reseñas[key]) reseñas[key] = [];
-      reseñas[key].push({{ usuario: usuarioActual.nombre, texto, cal }});
-      guardarDatos();
-      document.getElementById("reseñaTexto").value = "";
-      document.getElementById("calificacion").value = "";
-      mostrarReseñas();
-      alert("Reseña guardada ✅");
-    }}
+      }
+      
+      try {
+        await request(`${API}/libros/${libroId}`, {
+          method: 'DELETE'
+        });
+        
+        alert('✅ Libro eliminado exitosamente');
+        await cargarCatalogo();
+      } catch (err) {
+        alert('Error al eliminar libro: ' + err.message);
+      }
+    }
   </script>
 </body>
-</html>"""
-
+</html>
+"""
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(HTML_PAGE)
 
 @app.get("/api/v1/libros", response_model=List[BookOut])
-def listar_libros(
-    page: int = 1,
-    limit: int = 20,
-    categoria: Optional[str] = None,
-    search: Optional[str] = None,
-    sort: Optional[str] = None,
-):
-    """
-    Listar libros con paginación básica, filtrado por categoría y búsqueda por título/autor.
-    """
-    items = STORES["books"].copy()
-
-    if categoria:
-        items = [b for b in items if b["categoria"].lower() == categoria.lower()]
-
-    if search:
-        q = search.lower()
-        items = [b for b in items if q in b["titulo"].lower() or q in b["autor"].lower()]
-
-    if sort:
-        try:
-            field, direction = sort.split(":")
-            reverse = direction.lower() == "desc"
-            items.sort(key=lambda x: x.get(field, ""), reverse=reverse)
-        except Exception:
-            pass
-
+def listar_libros(page: int = 1, limit: int = 20, categoria: Optional[str] = None, search: Optional[str] = None):
+    items = facade.list_books(categoria=categoria, search=search)
     start = (page - 1) * limit
     end = start + limit
     return items[start:end]
 
-@app.post("/api/v1/libros", status_code=status.HTTP_201_CREATED, response_model=BookOut)
-def crear_libro(payload: BookCreate, user=Depends(get_current_user)):
-    """
-    Crear un libro (requiere autenticación).
-    """
-    book = {
-        "id": next_book_id(),
-        "titulo": payload.titulo,
-        "autor": payload.autor,
-        "categoria": payload.categoria,
-    }
-    STORES["books"].append(book)
+@app.post("/api/v1/libros", response_model=BookOut, status_code=status.HTTP_201_CREATED)
+def crear_libro(data: BookCreate, user=Depends(get_current_user)):
+    admin_required(user)
+    book = facade.add_book(data.titulo, data.autor, data.categoria)
     return book
 
 @app.get("/api/v1/libros/{libro_id}", response_model=BookOut)
 def obtener_libro(libro_id: int):
-    for b in STORES["books"]:
-        if b["id"] == libro_id:
-            return b
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    book = facade.get_book(libro_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    return book
 
 @app.put("/api/v1/libros/{libro_id}", response_model=BookOut)
 def actualizar_libro(libro_id: int, payload: BookUpdate, user=Depends(get_current_user)):
-    for b in STORES["books"]:
-        if b["id"] == libro_id:
-            if payload.titulo is not None:
-                b["titulo"] = payload.titulo
-            if payload.autor is not None:
-                b["autor"] = payload.autor
-            if payload.categoria is not None:
-                b["categoria"] = payload.categoria
-            return b
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    admin_required(user)
+    changes = {"titulo": payload.titulo, "autor": payload.autor, "categoria": payload.categoria}
+    updated = facade.update_book(libro_id, changes)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    return updated
 
 @app.delete("/api/v1/libros/{libro_id}", status_code=status.HTTP_204_NO_CONTENT)
 def eliminar_libro(libro_id: int, user=Depends(get_current_user)):
-    for i, b in enumerate(STORES["books"]):
-        if b["id"] == libro_id:
-            STORES["books"].pop(i)
-            STORES["reviews"].pop(str(libro_id), None)
-            return
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    admin_required(user)
+    ok = facade.delete_book(libro_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    return None
 
-
+# Reseñas
 @app.get("/api/v1/libros/{libro_id}/reseñas", response_model=List[ReviewOut])
 def listar_reseñas(libro_id: int):
-    key = str(libro_id)
-    return STORES["reviews"].get(key, [])
+    return STORES["reviews"].get(str(libro_id), [])
 
-@app.post("/api/v1/libros/{libro_id}/reseñas", status_code=status.HTTP_201_CREATED, response_model=ReviewOut)
+@app.post("/api/v1/libros/{libro_id}/reseñas", response_model=ReviewOut, status_code=status.HTTP_201_CREATED)
 def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current_user)):
-    if not any(b["id"] == libro_id for b in STORES["books"]):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
-    key = str(libro_id)
-    rec = {"usuario_id": user["id"], "texto": payload.texto, "cal": payload.cal}
-    STORES["reviews"].setdefault(key, []).append(rec)
+    if not facade.get_book(libro_id):
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
+    rec = facade.add_review(libro_id, user["id"], payload.texto, payload.cal)
     return rec
 
-
 @app.post("/api/v1/usuarios", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def registrar_usuario(payload: UserCreate):
+def registrar_usuario(payload: UserCreate, current: Optional[Dict[str, Any]] = None):
     if _get_user_by_email(payload.email):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email ya registrado")
-    user = {
-        "id": next_user_id(),
-        "nombre": payload.nombre,
-        "email": payload.email,
-        "password_hash": _hash_password(payload.clave),
-        "biblioteca": [],  
-    }
-    STORES["users"].append(user)
-    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
+        raise HTTPException(status_code=409, detail="Email ya registrado")
+    user = facade.register_user(payload.nombre, payload.email, _hash_password(payload.clave), payload.rol)
+    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"], "rol": user["rol"]}
 
-@app.post("/api/v1/auth/login", response_model=TokenOut)
-def login(email: EmailStr, clave: str):
-    user = authenticate_user(email, clave)
+@app.post("/api/v1/auth/login")
+def login(payload: LoginInput):
+    user = facade.authenticate(payload.email, payload.clave)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
-    token = create_token_for_user(user["id"])
-    return {"token": token}
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    token = secrets.token_urlsafe(32)
+    STORES["tokens"][token] = user["id"]
+    return {"token": token, "rol": user.get("rol", "usuario")}
 
 @app.get("/api/v1/auth/me", response_model=UserOut)
 def who_am_i(user=Depends(get_current_user)):
-    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"]}
+    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"], "rol": user.get("rol", "usuario")}
 
-
-@app.post("/api/v1/usuarios/me/biblioteca/{libro_id}", status_code=status.HTTP_200_OK)
+@app.post("/api/v1/usuarios/me/biblioteca/{libro_id}")
 def agregar_a_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
-    if not any(b["id"] == libro_id for b in STORES["books"]):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no encontrado")
+    if not facade.get_book(libro_id):
+        raise HTTPException(status_code=404, detail="Libro no encontrado")
     if libro_id in user["biblioteca"]:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Libro ya en biblioteca")
+        raise HTTPException(status_code=409, detail="Libro ya en biblioteca")
     user["biblioteca"].append(libro_id)
-    return {"message": "Libro agregado"}
+    event_subject.notify("BIBLIOTECA_ACTUALIZADA", {"usuario_id": user["id"], "libro_id": libro_id, "accion": "agregar"})
+    return {"message": "Libro agregado a tu biblioteca"}
 
-@app.delete("/api/v1/usuarios/me/biblioteca/{libro_id}", status_code=status.HTTP_200_OK)
+@app.delete("/api/v1/usuarios/me/biblioteca/{libro_id}")
 def quitar_de_mi_biblioteca(libro_id: int, user=Depends(get_current_user)):
     if libro_id not in user["biblioteca"]:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Libro no está en tu biblioteca")
+        raise HTTPException(status_code=404, detail="Libro no está en tu biblioteca")
     user["biblioteca"].remove(libro_id)
-    return {"message": "Libro eliminado"}
+    event_subject.notify("BIBLIOTECA_ACTUALIZADA", {"usuario_id": user["id"], "libro_id": libro_id, "accion": "quitar"})
+    return {"message": "Libro eliminado de tu biblioteca"}
+
+@app.get("/api/v1/usuarios/me/biblioteca", response_model=List[BookOut])
+def obtener_mi_biblioteca(user=Depends(get_current_user)):
+    libros = [b for b in STORES["books"] if b["id"] in user["biblioteca"]]
+    return libros
 
 if __name__ == "__main__":
     import uvicorn
