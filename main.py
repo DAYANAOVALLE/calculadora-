@@ -40,6 +40,7 @@ STORES = {
     "reviews": {},   
     "tokens": {},    
 }
+
 initial_books = [
     {"titulo": "Cien Años de Soledad", "autor": "Gabriel García Márquez", "categoria": "Novela"},
     {"titulo": "El libro troll", "autor": "el rubius", "categoria": "Historico"},
@@ -55,7 +56,7 @@ for i, b in enumerate(initial_books, start=1):
         "autor": b["autor"],
         "categoria": b["categoria"],
     })
- 
+
 if len(STORES["books"]) >= _next_book_id:
     _next_book_id = len(STORES["books"]) + 1
 
@@ -124,7 +125,6 @@ class LogObserver(ObserverBase):
 
 class EmailObserver(ObserverBase):
     def update(self, event: str, data: Dict[str, Any]):
-        # Simulación de envío de correo (o push). En prod, aquí llamas a un servicio real.
         print(f"[EMAIL] Notificación ({event}) enviada con payload: {data}")
 
 event_subject = EventSubject()
@@ -136,7 +136,6 @@ class LibraryFacade:
         self.store = store
         self.events = events
 
-    # Libros
     def add_book(self, titulo: str, autor: str, categoria: str) -> Dict[str, Any]:
         book = {
             "id": next_book_id(),
@@ -238,14 +237,13 @@ admin_default = {
     "id": next_user_id(),
     "nombre": "Administrador",
     "email": "admin@biblioteca.com",
-    "password_hash": _hash_password("admin123"),  # contraseña por defecto
+    "password_hash": _hash_password("admin123"), 
     "rol": "admin",
     "biblioteca": []
 }
 
 STORES["users"].append(admin_default)
-print("🟢 Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
-
+print("Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="es">
@@ -318,7 +316,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </head>
 <body>
   <div class="container">
-    <h1>📚 Biblioteca Personal</h1>
+    <h1> Biblioteca Personal</h1>
 
     <div id="login">
       <h2>Iniciar Sesión</h2>
@@ -368,7 +366,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <script>
     let token = null;
-    let userRole = null;  // ← Guardamos el rol del usuario
+    let userRole = null;  
     let libroSeleccionado = null;
     let misBibliotecaIds = [];
 
@@ -403,22 +401,20 @@ HTML_PAGE = """<!DOCTYPE html>
         });
         
         token = data.token;
-        userRole = data.rol;  // ← Guardamos el rol
+        userRole = data.rol;  
         
         document.getElementById('login').style.display = 'none';
         document.getElementById('panelUsuario').style.display = 'block';
         document.getElementById('cerrarSesion').style.display = 'block';
         
-        // Mostrar u ocultar sección de agregar libros según el rol
         const agregarLibroSection = document.querySelector('#panelUsuario h2:nth-of-type(3)').parentElement.querySelectorAll('h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, button:last-of-type');
         if (userRole === 'admin') {
-          alert('✅ Bienvenido Administrador');
+          alert('Bienvenido Administrador');
         } else {
-          // Ocultar formulario de agregar libros para usuarios normales
           document.querySelectorAll('#panelUsuario > h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #panelUsuario > button:last-of-type').forEach(el => {
             el.style.display = 'none';
           });
-          alert('✅ Bienvenido Usuario');
+          alert('Bienvenido Usuario');
         }
         
         await cargarCatalogo();
@@ -458,14 +454,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
     function logout() {
       token = null;
-      userRole = null;  // ← Limpiar rol
+      userRole = null;  
       document.getElementById('login').style.display = 'block';
       document.getElementById('panelUsuario').style.display = 'none';
       document.getElementById('cerrarSesion').style.display = 'none';
       document.getElementById('loginEmail').value = '';
       document.getElementById('loginClave').value = '';
       
-      // Mostrar de nuevo el formulario de agregar libros (para próximo login)
       document.querySelectorAll('#panelUsuario > h2:nth-of-type(3), #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #panelUsuario > button:last-of-type').forEach(el => {
         el.style.display = 'block';
       });
@@ -481,13 +476,11 @@ HTML_PAGE = """<!DOCTYPE html>
           const div = document.createElement('div');
           div.className = 'libro-item';
           
-          // Botones según el rol del usuario
           let botonesHTML = `
             <button class="btn-small" onclick="agregarAMiBiblioteca(${libro.id})">Agregar</button>
             <button class="btn-small" onclick="verDetalle(${libro.id})">Ver</button>
           `;
           
-          // Solo admin puede editar y eliminar
           if (userRole === 'admin') {
             botonesHTML += `
               <button class="btn-small" onclick="editarLibro(${libro.id})" style="background-color: #ff9800;">Editar</button>
@@ -558,7 +551,7 @@ HTML_PAGE = """<!DOCTYPE html>
         await cargarCatalogo();
       } catch (err) {
         if (err.message.includes('Solo administradores')) {
-          alert('❌ Solo los administradores pueden crear libros');
+          alert('Solo los administradores pueden crear libros');
         } else {
           alert('Error al agregar libro: ' + err.message);
         }
@@ -691,6 +684,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return HTMLResponse(HTML_PAGE)
@@ -732,7 +726,6 @@ def eliminar_libro(libro_id: int, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Libro no encontrado")
     return None
 
-# Reseñas
 @app.get("/api/v1/libros/{libro_id}/reseñas", response_model=List[ReviewOut])
 def listar_reseñas(libro_id: int):
     return STORES["reviews"].get(str(libro_id), [])
@@ -745,11 +738,23 @@ def crear_reseña(libro_id: int, payload: ReviewCreate, user=Depends(get_current
     return rec
 
 @app.post("/api/v1/usuarios", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def registrar_usuario(payload: UserCreate, current: Optional[Dict[str, Any]] = None):
+def registrar_usuario(payload: UserCreate):
     if _get_user_by_email(payload.email):
         raise HTTPException(status_code=409, detail="Email ya registrado")
-    user = facade.register_user(payload.nombre, payload.email, _hash_password(payload.clave), payload.rol)
-    return {"id": user["id"], "nombre": user["nombre"], "email": user["email"], "rol": user["rol"]}
+
+    user = facade.register_user(
+        payload.nombre,
+        payload.email.strip().lower(),
+        _hash_password(payload.clave),
+        payload.rol
+    )
+
+    return {
+        "id": user["id"],
+        "nombre": user["nombre"],
+        "email": user["email"],
+        "rol": user["rol"]
+    }
 
 @app.post("/api/v1/auth/login")
 def login(payload: LoginInput):
