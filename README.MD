@@ -3,7 +3,7 @@ Este proyecto es una API RESTful con una interfaz integrada que cumple la funci�
 
 Todo está construido con FastAPI, usando modelos Pydantic, manejo de roles, autenticación con tokens tipo Bearer y un pequeño patrón Observer para registrar eventos importantes.
 
-# 👉 características
+# características
 
 ##  Usuarios comunes
 
@@ -21,7 +21,7 @@ al inicializar el servidor, se genera un usuario administrador por defecto:
 | ----------------- | ------------------------------------------------------------------ |
 | admini@biblioteca.com | admin123 |
 
-## 📘 Libros
+## Libros
 
 - catalogo de libros disponible en la interfaz principal
 
@@ -29,13 +29,13 @@ al inicializar el servidor, se genera un usuario administrador por defecto:
 
 - Los administradores pueden agregar, editar y eliminar libros.
 
-## ⭐ Reseñas
+## Reseñas
 
 - Reseñas y calificaciones (1 a 5 estrellas)
 
 - los libros muestran las reseñas dejadas por el usuario
 
-## 🔔 Sistema de eventos 
+##  Sistema de eventos 
 
 Cada acción del usuario dentro del programa genera un evento, como por ejemplo:
 
@@ -47,7 +47,7 @@ Cada acción del usuario dentro del programa genera un evento, como por ejemplo:
 
 El sistema del modelo observer generan logs y “notificaciones” dentro del programa
 
-# 📂 Estructura general del proyecto
+# Estructura general del proyecto
 El proyecto se basa en un único archivo principal main.py, dentro de este archivo se encuentran:
 - Modelos Pydantic
 - Endpoints de FastAPI
@@ -57,13 +57,13 @@ El proyecto se basa en un único archivo principal main.py, dentro de este archi
 - Configuración de seguridad y autenticación
 además de un archivo requirements.txt con todos lo necesario para el funcionamiento del programa
 
-## ☁️despliegue en Azure
+## despliegue en Azure
 actualmente este proyecto cuenta con una versión desplegada en azure:
 
 [mipri.azurewebsites.net](mipri.azurewebsites.net)
 
 
-## ▶️ instalación local 
+##  instalación local 
 
 - clonar repositorio 
 
@@ -91,7 +91,7 @@ actualmente este proyecto cuenta con una versión desplegada en azure:
 abre chrome (o cualquier otro navegador de confianza) y abre este link: 
 http://127.0.0.1:8000
 
-# 🗂️ Endpoints
+#  Endpoints
 - usuario (solo el usuario común puede visualizarlo)
 - admin (solo el administrador puede visualizarlo)
 - publico(tanto el usuario común como el administrador pueden visualizarlo)
@@ -110,9 +110,9 @@ http://127.0.0.1:8000
 | DELETE | `/api/v1/usuarios/me/biblioteca/{id}` | Quitar libro      | Usuario |
 
 
-## ❤️nuestro objetivo 
+## nuestro objetivo 
 con este proyecto buscamos dos cosas, primero poder desarrollar nuestros conocimientos en FastAPI, CRUDS y patrones de diseño y segundo lograr desarrollar una plataforma funcional para la administración de bibliotecas personalizadas por los usuarios 
-## 🧩Autores
+## Autores
 
 - [DayanaOvalle :3](https://github.com/DAYANAOVALLE)
 
