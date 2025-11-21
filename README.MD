@@ -1,9 +1,9 @@
 # Sistema de Biblioteca – API REST con FastAPI
-Este proyecto es una API RESTful con una interfaz integrada que cumple la funcion de una libreria virtual abierta, donde el objetivo es simular una biblioteca personal donde cada usuario puede guardar libros, calificarlos y reseñarlos y donde un usuario administrador toma el control sobre el catálogo.
+Este proyecto es una API RESTful con una interfaz integrada que cumple la función de una librería virtual abierta, donde el objetivo es simular una biblioteca personal donde cada usuario puede guardar libros, calificarlos y reseñarlos y donde un usuario administrador toma el control sobre el catálogo.
 
 Todo está construido con FastAPI, usando modelos Pydantic, manejo de roles, autenticación con tokens tipo Bearer y un pequeño patrón Observer para registrar eventos importantes.
 
-# 👉 caracteristicas
+# 👉 características
 
 ##  Usuarios comunes
 
@@ -14,7 +14,7 @@ Todo está construido con FastAPI, usando modelos Pydantic, manejo de roles, aut
 - Rol de administrador con permisos especiales (editar, crear,eliminar del catalogo global)
 
 - Biblioteca personal para cada usuario (excepto el administrador)
-## usario administrador
+## usuario administrador
 al inicializar el servidor, se genera un usuario administrador por defecto:
 
 | usuario             | contraseña                                                             |
@@ -37,7 +37,7 @@ al inicializar el servidor, se genera un usuario administrador por defecto:
 
 ## 🔔 Sistema de eventos 
 
-Cada accion del usuario dentro del programa genera un evento, como por ejemplo:
+Cada acción del usuario dentro del programa genera un evento, como por ejemplo:
 
 - USUARIO_REGISTRADO
 
@@ -49,21 +49,21 @@ El sistema del modelo observer generan logs y “notificaciones” dentro del pr
 
 # 📂 Estructura general del proyecto
 El proyecto se basa en un único archivo principal main.py, dentro de este archivo se encuentran:
-
 - Modelos Pydantic
 - Endpoints de FastAPI
 - Lógica central mediante el LibraryFacade
 - Observadores de eventos
 - La interfaz HTML 
 - Configuración de seguridad y autenticación
+además de un archivo requirements.txt con todos lo necesario para el funcionamiento del programa
 
 ## ☁️despliegue en Azure
-actualmente este proyecto ceunta con una version desplegada en azure:
+actualmente este proyecto cuenta con una versión desplegada en azure:
 
 [mipri.azurewebsites.net](mipri.azurewebsites.net)
 
 
-## ▶️ instalacion local 
+## ▶️ instalación local 
 
 - clonar repositorio 
 
@@ -92,9 +92,9 @@ abre chrome (o cualquier otro navegador de confianza) y abre este link:
 http://127.0.0.1:8000
 
 # 🗂️ Endpoints
-- usuario (solo el usuario comun puede visualizarlo)
+- usuario (solo el usuario común puede visualizarlo)
 - admin (solo el administrador puede visualizarlo)
-- publico(tanto el usuario comun como el administrador pueden visualizarlo)
+- publico(tanto el usuario común como el administrador pueden visualizarlo)
 
 | Método | Ruta                                  | Descripción       | Roles     |
 | ------ | ------------------------------------- | ----------------- | ------- |
@@ -110,6 +110,8 @@ http://127.0.0.1:8000
 | DELETE | `/api/v1/usuarios/me/biblioteca/{id}` | Quitar libro      | Usuario |
 
 
+## ❤️nuestro objetivo 
+con este proyecto buscamos dos cosas, primero poder desarrollar nuestros conocimientos en FastAPI, CRUDS y patrones de diseño y segundo lograr desarrollar una plataforma funcional para la administración de bibliotecas personalizadas por los usuarios 
 ## 🧩Autores
 
 - [DayanaOvalle :3](https://github.com/DAYANAOVALLE)
