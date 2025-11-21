@@ -10,6 +10,7 @@ import os
 
 security = HTTPBearer()
 app = FastAPI(title="Sistema Biblioteca - API RESTful")
+
 class BookCreate(BaseModel):
     titulo: str = Field(..., min_length=1)
     autor: str = Field(..., min_length=1)
@@ -438,10 +439,11 @@ HTML_PAGE = """<!DOCTYPE html>
             <ul id="listaReseñas"></ul>
             <button onclick="cerrarDetalle()" class="btn-warning">Cerrar</button>
         </div>
-
-        <button id="cerrarSesion" onclick="logout">Cerrar Sesión</button>
+        
+        <button id="cerrarSesion" onclick="logout()">Cerrar Sesión</button>
+    
     </div>
-
+    
     <script>
         let token = null;
         let userRole = null;
