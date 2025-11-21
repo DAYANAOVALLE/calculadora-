@@ -247,7 +247,7 @@ admin_default = {
 }
 
 STORES["users"].append(admin_default)
-print("🟢 Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
+print(" Usuario administrador creado por defecto -> admin@biblioteca.com / admin123")
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="es">
@@ -487,7 +487,6 @@ HTML_PAGE = """<!DOCTYPE html>
                 document.getElementById('panelUsuario').style.display = 'block';
                 document.getElementById('cerrarSesion').style.display = 'block';
                 
-                // Elementos de Admin
                 const adminElements = document.querySelectorAll('#tituloAgregarLibro, #nuevoTitulo, #nuevoAutor, #nuevaCategoria, #nuevoContenido, #panelUsuario > button:last-of-type');
                 
                 if (userRole === 'admin') {

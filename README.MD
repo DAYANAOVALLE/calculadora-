@@ -49,9 +49,9 @@ El sistema del modelo observer generan logs y “notificaciones” dentro del pr
 
 # Estructura general del proyecto
 El proyecto se basa en un único archivo principal main.py, dentro de este archivo se encuentran:
-- Modelos Pydantic
+- Modelos pydantic
 - Endpoints de FastAPI
-- Lógica central mediante el LibraryFacade
+- Lógica central mediante el Facade
 - Observadores de eventos
 - La interfaz HTML 
 - Configuración de seguridad y autenticación
